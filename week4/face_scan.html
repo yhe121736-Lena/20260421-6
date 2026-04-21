@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>員工生物特徵辨識系統</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script src="https://unpkg.com/ml5@latest/dist/ml5.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; padding: 0; background: #050514; color: #00f2ff; font-family: 'Share Tech Mono', monospace; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+    .status-panel { position: absolute; top: 20px; left: 20px; border: 1px solid #00f2ff; background: rgba(0, 242, 255, 0.1); padding: 15px; pointer-events: none; z-index: 10; }
+    canvas { border: 2px solid #00f2ff; box-shadow: 0 0 30px rgba(0, 242, 255, 0.3); }
+  </style>
+</head>
+<body>
+  <div class="status-panel">
+    <div style="font-family: 'Orbitron'; font-weight: bold; margin-bottom: 5px;">BIO-SCANNER V4.0</div>
+    <div id="status">正在初始化核心...</div>
+    <div id="details">目標：未鎖定</div>
+  </div>
+  <script>
+    let faceMesh;
+    let video;
+    let faces = [];
+    let options = { maxFaces: 1, refineLandmarks: false, flipHorizontal: true };
+    let scanLineY = 0;
+    
+    // 數位雨相關變數
+    let symbolSize = 18;
+    let streams = [];
+    let isAuthorized = false;
+
+    function preload() {
+      faceMesh = ml5.faceMesh(options);
+    }
+
+    function setup() {
+      createCanvas(640, 480);
+      video = createCapture(VIDEO);
+      video.size(640, 480);
+      video.hide();
+      
+      // 初始化數位雨串流
+      let x = 0;
+      for (let i = 0; i <= width / symbolSize; i++) {
+        let stream = new Stream();
+        stream.generateSymbols(x, random(-1000, 0));
+        streams.push(stream);
+        x += symbolSize;
+      }
+
+      faceMesh.detectStart(video, gotFaces);
+    }
+
+    function gotFaces(results) {
+      faces = results;
+    }
+
+    function draw() {
+      background(5, 5, 20);
+      
+      // 1. 繪製攝影機畫面 (水平翻轉使其像鏡子)
+      push();
+      translate(width, 0);
+      scale(-1, 1);
+      image(video, 0, 0, width, height);
+      // 覆蓋一層電子感藍色濾鏡
+      fill(0, 242, 255, 40);
+      noStroke();
+      rect(0, 0, width, height);
+      pop();
+
+      // 2. 繪製數位雨
+      textSize(symbolSize);
+      streams.forEach(stream => stream.render());
+
+      // 3. 繪製動態掃描線
+      stroke(0, 242, 255, 150);
+      strokeWeight(2);
+      line(0, scanLineY, width, scanLineY);
+      scanLineY = (scanLineY + 5) % height;
+
+      // 4. 繪製 UI 裝飾框
+      drawUI();
+
+      if (faces.length > 0) {
+        isAuthorized = true;
+        let face = faces[0];
+        document.getElementById('status').innerText = "狀態：辨識中...";
+        document.getElementById('status').style.color = "#ffff00";
+
+        // 取得臉部範圍
+        let box = face.box;
+        if (box) {
+          noFill();
+          stroke(0, 255, 150);
+          strokeWeight(2);
+          // 繪製鎖定框
+          let x = box.xMin; 
+          rect(x, box.yMin, box.width, box.height);
+          
+          // 角落裝飾
+          strokeWeight(4);
+          line(x, box.yMin, x + 20, box.yMin);
+          line(x, box.yMin, x, box.yMin + 20);
+          line(x + box.width, box.yMin + box.height, x + box.width - 20, box.yMin + box.height);
+          line(x + box.width, box.yMin + box.height, x + box.width, box.yMin + box.height - 20);
+
+          // 繪製臉部網格線 (Mesh) 與特徵點
+          for (let i = 0; i < face.keypoints.length; i++) {
+            let kp = face.keypoints[i];
+            
+            // 繪製點
+            fill(0, 255, 150, 200);
+            noStroke();
+            ellipse(kp.x, kp.y, 2.5, 2.5);
+
+            // 繪製連線：檢查鄰近的點並連線，形成網格感
+            stroke(0, 255, 150, 40); // 設置極淡的綠色線條
+            strokeWeight(0.5);
+            for (let j = 1; j < 5; j++) { // 檢查接下來的幾個點
+              let nextIdx = i + j;
+              if (nextIdx < face.keypoints.length) {
+                let p2 = face.keypoints[nextIdx];
+                // 只連接距離較近的點，避免產生跨越臉部的大長線
+                if (dist(kp.x, kp.y, p2.x, p2.y) < 25) {
+                  line(kp.x, kp.y, p2.x, p2.y);
+                }
+              }
+            }
+          }
+
+          // 辨識成功文字
+          fill(0, 255, 150);
+          noStroke();
+          textSize(24);
+          textAlign(CENTER);
+          text("IDENTIFIED: AUTHORIZED CREW", width/2, box.yMin - 20);
+          
+          textSize(40);
+          fill(0, 255, 150, 150 + sin(frameCount * 0.1) * 100);
+          text("ACCESS GRANTED", width/2, height/2);
+          
+          document.getElementById('details').innerText = "目標：權限已核准";
+          document.getElementById('status').innerText = "狀態：辨識成功";
+          document.getElementById('status').style.color = "#00ff96";
+        }
+      } else {
+        isAuthorized = false;
+        document.getElementById('status').innerText = "狀態：等待目標...";
+        document.getElementById('status').style.color = "#ff3300";
+        document.getElementById('details').innerText = "目標：未鎖定";
+      }
+    }
+
+    function drawUI() {
+      noFill();
+      stroke(0, 242, 255, 80);
+      strokeWeight(1);
+      // 十字瞄準線
+      line(width/2 - 20, height/2, width/2 + 20, height/2);
+      line(width/2, height/2 - 20, width/2, height/2 + 20);
+      
+      // 四角裝飾
+      rect(10, 10, 50, 50);
+      rect(width-60, 10, 50, 50);
+      rect(10, height-60, 50, 50);
+      rect(width-60, height-60, 50, 50);
+    }
+
+    // 數位雨符號類別
+    class Symbol {
+      constructor(x, y, speed, first) {
+        this.x = x;
+        this.y = y;
+        this.value = '';
+        this.speed = speed;
+        this.first = first;
+        this.switchInterval = round(random(2, 20));
+      }
+      setToRandomSymbol() {
+        if (frameCount % this.switchInterval == 0) {
+          this.value = String.fromCharCode(0x30A0 + round(random(0, 96)));
+        }
+      }
+      rain() {
+        this.y = (this.y >= height) ? 0 : this.y + this.speed;
+      }
+    }
+
+    class Stream {
+      constructor() {
+        this.symbols = [];
+        this.totalSymbols = round(random(5, 30));
+        this.speed = random(5, 15);
+      }
+      generateSymbols(x, y) {
+        let first = round(random(0, 4)) == 1;
+        for (let i = 0; i <= this.totalSymbols; i++) {
+          let symbol = new Symbol(x, y, this.speed, first);
+          symbol.setToRandomSymbol();
+          this.symbols.push(symbol);
+          y -= symbolSize;
+          first = false;
+        }
+      }
+      render() {
+        this.symbols.forEach(s => {
+          isAuthorized ? fill(0, 255, 150, 180) : fill(0, 242, 255, 120);
+          if (s.first) fill(255);
+          text(s.value, s.x, s.y);
+          s.rain();
+          s.setToRandomSymbol();
+        });
+      }
+    }
+  </script>
+</body>
+</html>
